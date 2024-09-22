@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import requests, datetime, time, os, subprocess, shutil, curses, sys,\
-    configparser, platform
+    configparser, platform, json, argparse
 from typing import Any, List, Dict
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +12,14 @@ class Geometry:
     two_pane_width: int
     top_row_height: int = 1
     spacer_height: int = 1
+    task_row_height: int = 0
 
     def __init__(self, stdscr) -> None:   
         self.total_height, self.total_width = stdscr.getmaxyx()
         self.two_pane_width = self.total_width // 2
+        self.task_row_height = self.total_height - (
+            self.top_row_height + self.spacer_height
+        )
 
     def col_width(self, num_columns: int = 0, area: int = 0) -> int:
         """Defaults to single column width if num_columns is 0
@@ -68,7 +72,6 @@ class SystemInfo:
             else:
                 return {"Processor": "N/A"}
 
-
 @dataclass
 class Config:
     mem: List
@@ -95,7 +98,6 @@ class Config:
         parser['Settings'] = {'wx_loc': 'Paris'}
         with open(path, 'w') as file:
             parser.write(file)
-
 
 class Dashboard:
     def __init__(self, config):
@@ -135,7 +137,9 @@ class Dashboard:
         return requests.get("https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty").json()
 
     def get_news(self, number, current = 0) -> List[str]:
-        """Get a list of articles"""
+        """Get a list of articles
+            - [ ] Make async? $id{eaffafac-6f91-4c6f-ad53-69281547ff1f}
+        """
         top_stories_ids = self.get_top_story_ids()
         stories = []
         for i in range(number):
@@ -265,8 +269,11 @@ class UserInterface:
                 else:
                     self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article_snippet, curses.color_pair(1))
 
-
-def draw_ui(stdscr):
+def enable_task_integration():
+    """Check first if task is installed"""
+def draw_ui(stdscr, **kwargs):
+    dash = kwargs["dash"]
+    config = kwargs["config"]
     curses.start_color()
     curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
@@ -284,17 +291,18 @@ def draw_ui(stdscr):
     # # Print Title Bar
     remaining_rows = UI.draw_top_bar([wx, updates, sysinfo])
     # Fetch that many news items
-    news_articles = dash.get_news(remaining_rows)
+    # news_articles = dash.get_news(remaining_rows)
+    news_articles = dash.articles
     UI.draw_article_list(news_articles)
     # Begin pane 2 
-    read_article(stdscr, geometry, UI, 0)
+    read_article(stdscr, geometry, UI, dash, 0,)
 
-def read_article(stdscr, geometry, UI, number = 0):
+def read_article(stdscr, geometry, UI, dash, number = 0):
     depth_counter = 0
     scroll_offset = 0
     article = dash.article_reader(number)
     while True:
-        for i in range((geometry.top_row_height + geometry.spacer_height), geometry.total_height):
+        for i in range((geometry.top_row_height), geometry.total_height):
             stdscr.move(i, geometry.two_pane_width)
             stdscr.clrtoeol()
 
@@ -320,12 +328,12 @@ def read_article(stdscr, geometry, UI, number = 0):
             number = number + 1
             depth_counter += 1
             UI.draw_article_list(dash.articles, number)
-            read_article(stdscr, geometry, UI, number)
+            read_article(stdscr, geometry, UI, dash, number)
         elif key == 16:
             depth_counter -= 1
             number = number - 1
             UI.draw_article_list(dash.articles, number)
-            read_article(stdscr, geometry, UI, number)
+            read_article(stdscr, geometry, UI, dash, number)
         elif key == ord('q'):
             sys.exit()
 
@@ -341,31 +349,54 @@ def handle_menu(stdscr):
     draw_ui(stdscr)
 
 def main():
-    # parser = argparse.ArgumentParser(description="Dashboard Interface")
-    # parser.add_argument('--weather', '-w', action='store_true', help="Display weather.")
-    # parser.add_argument('--updates', '-u', action='store_true', help="Display updates.")
-    # parser.add_argument('--spacer', '-s', action='store_true', help="Display spacer.")
-    # parser.add_argument('--news', '-n', type=int, help="Number of articles to fetch.")
-    # parser.add_argument('--article', '-a', action='store_true', help="Article reader")
-    # args = parser.parse_args()
-    # dash = Dashboard()
-    # if args.weather:
-    #     dash.do_print_weather()
-    # elif args.updates:
-    #     dash.do_print_update_count()
-    # elif args.spacer:
-    #     dash.print_spacer()
-    # elif args.news:
-    #     dash.print_news(args.news)
-    # elif args.article:
-    #     dash.article_reader()
-    # else:
-    #     # print("Please specify an option. Use --help for more details.")
-    #     curses.wrapper(draw_ui)
-    curses.wrapper(draw_ui)
+    parser = argparse.ArgumentParser(description="Dashboard Interface")
+    parser.add_argument('--weather', '-w', action='store_true', help="Display weather.")
+    parser.add_argument('--updates', '-u', action='store_true', help="Display updates.")
+    parser.add_argument('--spacer', '-s', action='store_true', help="Display spacer.")
+    parser.add_argument('--news', '-n', type=int, help="Number of articles to fetch.")
+    parser.add_argument('--article', '-a', action='store_true', help="Article reader")
+    args = parser.parse_args()
+    config = Config()
+    dash = Dashboard(config)
+    if args.weather:
+        dash.do_print_weather()
+    elif args.updates:
+        dash.do_print_update_count()
+    elif args.spacer:
+        dash.print_spacer()
+    elif args.news:
+        dash.print_news(args.news)
+    elif args.article:
+        dash.article_reader()
+    else:
+        # print("Please specify an option. Use --help for more details.")
+        kw = {"dash": dash, "config": config}
+        # curses.wrapper(draw_ui)
+        curses.wrapper(lambda stdscr: draw_ui(stdscr, **kw))
+    # UI = UI()
+    # curses.wrapper(draw_ui)
+
+class Task:
+    def __init__(self):
+        self.command = 'task' if subprocess.run(['task'], stdout=subprocess.PIPE, text=True) else 'CNF'
+        self.active_tasks = self.load_tasks('active')
+        self.completed_tasks = self.load_tasks('done')
+
+    def load_tasks(self, filter: str = "") -> Any:
+        """:return: Json"""
+        try:
+            result = subprocess.run([self.command, 'export', filter], stdout=subprocess.PIPE, text=True)
+            tasks = json.loads(result.stdout)
+            return tasks
+        except Exception:
+            return {}
+
+    def active_tasks_list(self) -> List:
+        _active_tasks = []
+        for task in self.active_tasks:
+            _active_tasks.append(f"{task["id"]} {task["description"]}")
+        return _active_tasks
 
 if __name__ == '__main__':
     # asyncio.run(main())
-    config = Config()
-    dash = Dashboard(config)
     main()
