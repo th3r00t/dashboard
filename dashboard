@@ -258,11 +258,13 @@ class UserInterface:
             self.stdscr.move(i, self.geometry.two_pane_width)
             self.stdscr.clrtoeol()
 
-        for i, article in enumerate(articles, start=0):
-            if i != active:
-                self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article[0:self.geometry.two_pane_width-5], curses.color_pair(2))
-            else:
-                self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article[0:self.geometry.two_pane_width-5], curses.color_pair(1))
+            for i, article in enumerate(articles, start=0):
+                article_snippet = article[:self.geometry.two_pane_width-5]
+                if i + self.geometry.top_row_height + self.geometry.spacer_height < self.geometry.total_height:
+                    if i != active:
+                        self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article_snippet, curses.color_pair(2))
+                    else:
+                        self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article_snippet, curses.color_pair(1))
 
 
 def draw_ui(stdscr):
