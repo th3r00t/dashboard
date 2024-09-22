@@ -18,3 +18,7 @@ that is wx_loc. Replace Paris with the correct code as per wttr.in
 Right now the dashboard will respond to Ctrl+N & Ctrl+P for Next & Previous
 articles, up & down arrow keys (& Mouse Scroll) for navigting the article 
 F1 for Menu (Currently unused), and q for quit.
+
+## TODO
+
+- [ ] Fix out of bounds error when redrawing article list $id{6e608640-5ac1-43a6-972b-ecae726a3d83}
