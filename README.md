@@ -21,4 +21,5 @@ F1 for Menu (Currently unused), and q for quit.
 
 ## TODO
 
-- [ ] Fix out of bounds error when redrawing article list $id{6e608640-5ac1-43a6-972b-ecae726a3d83}
+## Done
+- [x] Fix out of bounds error when redrawing article list $id{6e608640-5ac1-43a6-972b-ecae726a3d83}
