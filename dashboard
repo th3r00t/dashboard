@@ -1,0 +1,370 @@
+#!/usr/bin/env python
+import requests, datetime, time, os, subprocess, shutil, curses, sys,\
+    configparser, platform
+from typing import Any, List, Dict
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class Geometry:
+    total_height: int
+    total_width: int
+    two_pane_width: int
+    top_row_height: int = 1
+    spacer_height: int = 1
+
+    def __init__(self, stdscr) -> None:   
+        self.total_height, self.total_width = stdscr.getmaxyx()
+        self.two_pane_width = self.total_width // 2
+
+    def col_width(self, num_columns: int = 0, area: int = 0) -> int:
+        """Defaults to single column width if num_columns is 0
+        if area is 0 uses total screen width.
+        
+        :param: num_columns int
+        :param: area int
+        :returns: int"""
+        if area == 0:
+            return self.total_width // num_columns
+        else:
+            return area // num_columns
+
+    def bottom_row_height(self) -> int:
+        return self.total_height - self.top_row_height - self.spacer_height
+
+@dataclass
+class SystemInfo:
+    mem: List
+    cpu: Dict
+    system: str = platform.system()
+
+    def __init__(self):
+        self.mem = []
+        self.cpu = self.cpu_state()
+
+    def mem_state(self) -> List:
+        return []
+
+    def cpu_state(self) -> Dict[str, str]:
+        if self.system == "Linux":
+            key_pairs: List = []
+            with open('/proc/cpuinfo') as f:
+                for i, v in enumerate(f.readlines(), start=0):
+                    value = v.strip().replace("\t", "").format()
+                    key_pair = value.replace(" ", "").split(":")
+                    key_pairs.append(key_pair)
+            cpu_info_dict = {item[0]: item[1] for item in key_pairs if len(item) == 2}
+            return cpu_info_dict
+        elif self.system == "Windows":
+            result = subprocess.run(["wmic", "cpu", "get", "name"], stdout=subprocess.PIPE, text=True)
+            return {"Processor": result.stdout.strip().splitlines()[1]}
+        elif self.system == "Darwin":
+            result = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], stdout=subprocess.PIPE, text=True)
+            return {"Processor": result.stdout.strip().splitlines()[1]}
+        else:
+            processor = platform.processor()
+            if processor:
+                return {"Processor": processor}
+            else:
+                return {"Processor": "N/A"}
+
+
+@dataclass
+class Config:
+    mem: List
+    cpu: List
+    parser: configparser.ConfigParser
+    obj: Any
+    path: Path
+
+    def __init__(self):
+        config_dir = Path.home()/".config"/"dashboard"
+        config_file = config_dir/"config.ini"
+        if not config_dir.exists():
+            config_dir.mkdir(parents=True, exist_ok=True)
+            self.make_initial_config(config_file)
+        self.parser = configparser.ConfigParser()
+        self.file = config_file 
+        self.settings = self.load()
+
+    def load(self):
+        return self.parser.read(self.file) 
+    
+    def make_initial_config(self, path):
+        parser = configparser.ConfigParser()
+        parser['Settings'] = {'wx_loc': 'Paris'}
+        with open(path, 'w') as file:
+            parser.write(file)
+
+
+class Dashboard:
+    def __init__(self, config):
+        self.term_size = shutil.get_terminal_size()
+        self.weather = self.get_weather(config.parser['Settings']['wx_loc'])
+        self.is_arch: bool = self.archlinux()
+        self.articles = self.get_news(50)
+        self.current_article = 0
+        self.refresh_rate = (60 * 10)
+        self.wait_timer = 60
+        self.browser = "lynx"
+
+    def clear_screen(self):
+        os.system('clear' if os.name == 'posix' else 'cls')
+
+    def get_weather(self, wx_loc):
+        try:
+            response = requests.get(f"https://wttr.in/{wx_loc}", params={'format': '4'})
+            if response.status_code == 200:
+                weather = response.text
+            else:
+                weather = f"Error: {response.status_code}"
+        except Exception as e:
+            return f"Error: {e}"
+        return weather
+
+    def print_weather(self):
+        return f"{self.weather}"
+
+    def print_updates(self):
+        return f"System Updates: {self.count_arch_updates()}"
+
+    def print_cpu_string(self):
+        return SystemInfo.cpu[0]
+
+    def get_top_story_ids(self):
+        return requests.get("https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty").json()
+
+    def get_news(self, number, current = 0) -> List[str]:
+        """Get a list of articles"""
+        top_stories_ids = self.get_top_story_ids()
+        stories = []
+        for i in range(number):
+            story_id = top_stories_ids[i]
+            story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json?print=pretty"
+            story_data = requests.get(story_url).json()
+            url = story_data.get('url', 'No URL')
+            _avail_columns = self.term_size.columns - len(url) - 10
+            _ =  f"{story_data.get('url', 'No URL')}"
+            stories.append(f"{story_id} > {story_data['title'][0:_avail_columns]}")
+
+        return stories
+            
+    def center_pos(self, msg):
+        _avail_columns = self.term_size.columns
+        _msg_len = len(msg)
+        return ((_avail_columns * .5) - (_msg_len * .5))
+
+    def print_section_header(self, msg):
+        _spacer = ""
+        for _ in range(self.center_pos(msg).__int__()):
+            _spacer = _spacer + " "
+        return f"{_spacer}{msg}"
+
+    def print_news(self, number, current: int = 0):
+        news_source = "Hacker News"
+        news = self.articles[0:number]
+        self.print_section_header(news_source)
+        out = ""
+        for article in news:
+            out = out + "article\n"
+            return f"{article}"
+
+    def print_spacer(self):
+        # self.clear_screen()
+        while (True):
+            print("", end="")
+            time.sleep(self.wait_timer)
+
+    def do_print_weather(self):
+        start_time = datetime.datetime.now()
+        self.print_weather()
+        while (True):
+            endtime = start_time + datetime.timedelta(seconds=self.refresh_rate)
+            while datetime.datetime.now() < endtime:
+                time.sleep(self.wait_timer)
+            self.print_weather()
+            start_time = datetime.datetime.now()
+
+    def do_print_update_count(self):
+        start_time = datetime.datetime.now()
+        self.print_updates()
+        while (True):
+            endtime = start_time + datetime.timedelta(seconds=self.refresh_rate)
+            while datetime.datetime.now() < endtime:
+                time.sleep(self.wait_timer)
+            self.print_updates()
+            start_time = datetime.datetime.now()
+
+    def archlinux(self) -> bool:
+        try:
+            with open('/etc/os-release', 'r') as f:
+                os_info = f.read().lower()
+            return 'arch' in os_info
+        except FileNotFoundError:
+            return False
+
+    def count_arch_updates(self) -> float:
+        if self.is_arch:
+            result = subprocess.run(['pacman', '-Qu'], capture_output=True, text=True)
+            if result.stdout == "":
+                return 0
+            updates = result.stdout.strip().split('\n')
+            if updates[0]:
+                return len(updates)
+            else:
+                return 0
+        else:
+            return 0
+    
+    def article_reader(self, story_id = None):
+        if story_id is None:
+            story_id = self.get_top_story_ids()[0]
+        else: 
+            self.current_article = story_id
+            story_id = self.get_top_story_ids()[story_id]
+        story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json?print=pretty"
+        story_data = requests.get(story_url).json()
+        url = story_data.get('url', 'No URL')
+        lynx_out = subprocess.run(["lynx", "-dump", url], stdout=subprocess.PIPE).stdout.decode('utf-8', errors='replace')
+
+        return lynx_out.splitlines()
+
+class UserInterface:
+    def __init__(self, stdscr) -> None:
+        self.stdscr = stdscr
+        self.geometry = Geometry(stdscr)
+
+    def draw_top_bar(self, items: List) -> int:
+        """Draws Main Menu Bar aka top_bar
+            :param: items [wx, updates, news_headline]
+        """
+        wx, updates, sysinfo = items[0], items[1], items[2]
+        cpu_modelname = sysinfo.cpu['modelname']
+        cpu_cores = sysinfo.cpu['cpucores']
+        cpu_MHz = int(float(sysinfo.cpu["cpuMHz"]))
+        cpu_str = f"{cpu_cores} Core {cpu_modelname} @ {cpu_MHz} MHz"
+        self.stdscr.addstr(0, (self.geometry.total_width - len(wx) + 1 - len(updates) - len(cpu_str) - 10), cpu_str, curses.color_pair(1))
+        self.stdscr.addstr(0, (self.geometry.total_width - len(wx) + 1 - len(updates) - 5), updates)
+        self.stdscr.addstr(0, (self.geometry.total_width - len(wx)), wx)
+        # Print Separator
+        self.stdscr.hline(self.geometry.top_row_height, 0, "-", self.geometry.total_width, curses.A_BOLD)
+        # Determine how many rows are left in the current terminal
+        remaining_rows = (self.geometry.total_height - (self.geometry.top_row_height + self.geometry.spacer_height)) 
+        return remaining_rows
+
+    def draw_article_list(self, articles: List, active: int = 0):
+        for i in range((self.geometry.top_row_height + self.geometry.spacer_height), self.geometry.total_height):
+            self.stdscr.move(i, self.geometry.two_pane_width)
+            self.stdscr.clrtoeol()
+
+        for i, article in enumerate(articles, start=0):
+            if i != active:
+                self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article[0:self.geometry.two_pane_width-5], curses.color_pair(2))
+            else:
+                self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article[0:self.geometry.two_pane_width-5], curses.color_pair(1))
+
+
+def draw_ui(stdscr):
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)
+    geometry = Geometry(stdscr)
+    UI = UserInterface(stdscr)
+    stdscr.clear()
+
+    menu_btn_str = f"[F1] Menu"
+    stdscr.addstr(0, 0, menu_btn_str, curses.color_pair(3))
+    # news_headline = dash.print_news(1).split("> ")[1]
+    sysinfo = SystemInfo()
+    wx = dash.print_weather()
+    updates = dash.print_updates()
+    # # Print Title Bar
+    remaining_rows = UI.draw_top_bar([wx, updates, sysinfo])
+    # Fetch that many news items
+    news_articles = dash.get_news(remaining_rows)
+    UI.draw_article_list(news_articles)
+    # Begin pane 2 
+    read_article(stdscr, geometry, UI, 0)
+
+def read_article(stdscr, geometry, UI, number = 0):
+    depth_counter = 0
+    scroll_offset = 0
+    article = dash.article_reader(number)
+    while True:
+        for i in range((geometry.top_row_height + geometry.spacer_height), geometry.total_height):
+            stdscr.move(i, geometry.two_pane_width)
+            stdscr.clrtoeol()
+
+        for i, line in enumerate(article[scroll_offset:]):
+            if i + geometry.top_row_height +geometry.spacer_height >= geometry.bottom_row_height():
+                break
+            stdscr.addstr(geometry.top_row_height + geometry.spacer_height + i, geometry.two_pane_width, line)
+        # print Separator
+        stdscr.hline(geometry.top_row_height, 0, "-", geometry.total_width)
+        # print V Separaror
+        stdscr.vline(geometry.top_row_height + geometry.spacer_height, geometry.two_pane_width -1, "|", geometry.bottom_row_height() - geometry.spacer_height)
+        # Draw the screen
+        stdscr.refresh()
+        # Get input
+        key = stdscr.getch()
+        if key == curses.KEY_UP and scroll_offset > 0:
+            scroll_offset -= 1
+        elif key == curses.KEY_DOWN and scroll_offset < len(article) - geometry.bottom_row_height() + geometry.spacer_height:
+            scroll_offset += 1  # Scroll down
+        elif key == curses.KEY_F1:
+            handle_menu(stdscr)
+        elif key == 14:
+            number = number + 1
+            depth_counter += 1
+            UI.draw_article_list(dash.articles, number)
+            read_article(stdscr, geometry, UI, number)
+        elif key == 16:
+            depth_counter -= 1
+            number = number - 1
+            UI.draw_article_list(dash.articles, number)
+            read_article(stdscr, geometry, UI, number)
+        elif key == ord('q'):
+            sys.exit()
+
+def handle_menu(stdscr):
+    stdscr.clear()
+    stdscr.addstr(1, 1, "Menu Opened! Press 'q' to exit this menu.", curses.A_BOLD)
+    stdscr.refresh()
+    while True:
+        key = stdscr.getch()
+        if key == ord('q'):
+            break
+    stdscr.clear()
+    draw_ui(stdscr)
+
+def main():
+    # parser = argparse.ArgumentParser(description="Dashboard Interface")
+    # parser.add_argument('--weather', '-w', action='store_true', help="Display weather.")
+    # parser.add_argument('--updates', '-u', action='store_true', help="Display updates.")
+    # parser.add_argument('--spacer', '-s', action='store_true', help="Display spacer.")
+    # parser.add_argument('--news', '-n', type=int, help="Number of articles to fetch.")
+    # parser.add_argument('--article', '-a', action='store_true', help="Article reader")
+    # args = parser.parse_args()
+    # dash = Dashboard()
+    # if args.weather:
+    #     dash.do_print_weather()
+    # elif args.updates:
+    #     dash.do_print_update_count()
+    # elif args.spacer:
+    #     dash.print_spacer()
+    # elif args.news:
+    #     dash.print_news(args.news)
+    # elif args.article:
+    #     dash.article_reader()
+    # else:
+    #     # print("Please specify an option. Use --help for more details.")
+    #     curses.wrapper(draw_ui)
+    curses.wrapper(draw_ui)
+
+if __name__ == '__main__':
+    # asyncio.run(main())
+    config = Config()
+    dash = Dashboard(config)
+    main()
