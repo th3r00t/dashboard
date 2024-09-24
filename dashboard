@@ -1,12 +1,14 @@
 #!/usr/bin/env python
-import requests, datetime, time, os, subprocess, shutil, curses, sys,\
-    configparser, platform, json, argparse
+import requests, subprocess, shutil, curses, sys, configparser, platform, json, argparse
 from typing import Any, List, Dict
 from dataclasses import dataclass
 from pathlib import Path
 
 @dataclass
 class Geometry:
+    """
+    The Geometry class holds all terminal measurements.
+    """
     total_height: int
     total_width: int
     two_pane_width: int
@@ -14,7 +16,14 @@ class Geometry:
     spacer_height: int = 1
     task_row_height: int = 0
 
-    def __init__(self, stdscr) -> None:   
+    def __init__(self, stdscr) -> None:
+        """
+        Initializes the Geometry object based on the stdscr input.
+
+        :param stdscr: curses stdscr object.
+        :type stdscr: curses._CursesWindow
+        :returns: None
+        """
         self.total_height, self.total_width = stdscr.getmaxyx()
         self.two_pane_width = self.total_width // 2
         self.task_row_height = self.total_height - (
@@ -24,9 +33,11 @@ class Geometry:
     def col_width(self, num_columns: int = 0, area: int = 0) -> int:
         """Defaults to single column width if num_columns is 0
         if area is 0 uses total screen width.
-        
-        :param: num_columns int
-        :param: area int
+
+        :param num_columns: Desired number of columns
+        :type num_columns: int
+        :param area: Total area to compute against
+        :type area: int
         :returns: int"""
         if area == 0:
             return self.total_width // num_columns
@@ -34,6 +45,9 @@ class Geometry:
             return area // num_columns
 
     def bottom_row_height(self) -> int:
+        """
+        This method is not effective as it will not calculate the area of the articles list
+        """
         return self.total_height - self.top_row_height - self.spacer_height
 
 @dataclass
@@ -92,7 +106,7 @@ class Config:
 
     def load(self):
         return self.parser.read(self.file) 
-    
+
     def make_initial_config(self, path):
         parser = configparser.ConfigParser()
         parser['Settings'] = {'wx_loc': 'Paris'}
@@ -100,22 +114,20 @@ class Config:
             parser.write(file)
 
 class Dashboard:
-    def __init__(self, config):
+    def __init__(self):
+        self.config = Config()
         self.term_size = shutil.get_terminal_size()
-        self.weather = self.get_weather(config.parser['Settings']['wx_loc'])
         self.is_arch: bool = self.archlinux()
-        self.articles = self.get_news(50)
+        # self.articles = self.get_news(50)
         self.current_article = 0
         self.refresh_rate = (60 * 10)
         self.wait_timer = 60
         self.browser = "lynx"
+        self.article_list = []
 
-    def clear_screen(self):
-        os.system('clear' if os.name == 'posix' else 'cls')
-
-    def get_weather(self, wx_loc):
+    def weather(self):
         try:
-            response = requests.get(f"https://wttr.in/{wx_loc}", params={'format': '4'})
+            response = requests.get(f"https://wttr.in/{self.config["Settings"]["wx_loc"]}", params={'format': '4'})
             if response.status_code == 200:
                 weather = response.text
             else:
@@ -124,88 +136,51 @@ class Dashboard:
             return f"Error: {e}"
         return weather
 
-    def print_weather(self):
-        return f"{self.weather}"
+    def updates(self):
+        if self.is_arch:
+            return self.count_arch_updates()
 
-    def print_updates(self):
-        return f"System Updates: {self.count_arch_updates()}"
-
-    def print_cpu_string(self):
-        return SystemInfo.cpu[0]
-
-    def get_top_story_ids(self):
+    def top_story_ids(self):
         return requests.get("https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty").json()
 
-    def get_news(self, number, current = 0) -> List[str]:
-        """Get a list of articles
-            - [ ] Make async? $id{eaffafac-6f91-4c6f-ad53-69281547ff1f}
-        """
-        top_stories_ids = self.get_top_story_ids()
-        stories = []
-        for i in range(number):
-            story_id = top_stories_ids[i]
-            story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json?print=pretty"
-            story_data = requests.get(story_url).json()
-            url = story_data.get('url', 'No URL')
-            _avail_columns = self.term_size.columns - len(url) - 10
-            _ =  f"{story_data.get('url', 'No URL')}"
-            stories.append(f"{story_id} > {story_data['title'][0:_avail_columns]}")
-
-        return stories
-            
-    def center_pos(self, msg):
-        _avail_columns = self.term_size.columns
-        _msg_len = len(msg)
-        return ((_avail_columns * .5) - (_msg_len * .5))
-
-    def print_section_header(self, msg):
-        _spacer = ""
-        for _ in range(self.center_pos(msg).__int__()):
-            _spacer = _spacer + " "
-        return f"{_spacer}{msg}"
-
-    def print_news(self, number, current: int = 0):
-        news_source = "Hacker News"
-        news = self.articles[0:number]
-        self.print_section_header(news_source)
-        out = ""
-        for article in news:
-            out = out + "article\n"
-            return f"{article}"
-
-    def print_spacer(self):
-        # self.clear_screen()
-        while (True):
-            print("", end="")
-            time.sleep(self.wait_timer)
-
-    def do_print_weather(self):
-        start_time = datetime.datetime.now()
-        self.print_weather()
-        while (True):
-            endtime = start_time + datetime.timedelta(seconds=self.refresh_rate)
-            while datetime.datetime.now() < endtime:
-                time.sleep(self.wait_timer)
-            self.print_weather()
-            start_time = datetime.datetime.now()
-
-    def do_print_update_count(self):
-        start_time = datetime.datetime.now()
-        self.print_updates()
-        while (True):
-            endtime = start_time + datetime.timedelta(seconds=self.refresh_rate)
-            while datetime.datetime.now() < endtime:
-                time.sleep(self.wait_timer)
-            self.print_updates()
-            start_time = datetime.datetime.now()
+    def articles(self, number = 0, current = 0) -> List[str]:
+        if len(self.article_list) == 0:
+            """Get a list of articles
+            """
+            top_stories_ids = self.top_story_ids()
+            stories = []
+            if number == 0:
+                number = len(self.article_list)
+            for i in range(number):
+                story_id = top_stories_ids[i]
+                story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json?print=pretty"
+                story_data = requests.get(story_url).json()
+                url = story_data.get('url', 'No URL')
+                # _avail_columns = self.term_size.columns - len(url) - 10
+                _avail_columns = self.term_size.columns - len(url) - 5
+                _ =  f"{story_data.get('url', 'No URL')}"
+                stories.append(f"{story_id} > {story_data['title'][0:_avail_columns]}")
+            self.article_list = stories
+            return stories
+        else: return self.article_list
 
     def archlinux(self) -> bool:
+        return 'arch' in self.os_info()["id"]
+
+    def os_info(self) -> Dict:
+        res = {}
         try:
             with open('/etc/os-release', 'r') as f:
                 os_info = f.read().lower()
-            return 'arch' in os_info
+            for line in os_info.strip().split('\n'):
+                k,v = line.split("=", 1)
+                v = v.strip('"')
+                res[k] = v
+            res["found"] = True
+            return res
         except FileNotFoundError:
-            return False
+            res["found"] = False
+        return res
 
     def count_arch_updates(self) -> float:
         if self.is_arch:
@@ -219,13 +194,13 @@ class Dashboard:
                 return 0
         else:
             return 0
-    
+
     def article_reader(self, story_id = None):
         if story_id is None:
-            story_id = self.get_top_story_ids()[0]
+            story_id = self.top_story_ids()[0]
         else: 
             self.current_article = story_id
-            story_id = self.get_top_story_ids()[story_id]
+            story_id = self.top_story_ids()[story_id]
         story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json?print=pretty"
         story_data = requests.get(story_url).json()
         url = story_data.get('url', 'No URL')
@@ -237,30 +212,71 @@ class UserInterface:
     def __init__(self, stdscr) -> None:
         self.stdscr = stdscr
         self.geometry = Geometry(stdscr)
+        self.dash = Dashboard()
+        self.article_count = 0
+        self.task_start_row = None
+        self.hline = curses.ACS_HLINE
+        self.vline = curses.ACS_VLINE
 
-    def draw_top_bar(self, items: List) -> int:
+    def center_pos(self, msg, width = None):
+        if width is None:
+            _avail_columns = self.geometry.total_width
+        else:
+            _avail_columns = width
+        _msg_len = len(msg)
+        return ((_avail_columns * .5) - (_msg_len * .5))
+
+    def print_section_header(self, msg, width = None):
+        _spacer = ""
+        for _ in range(self.center_pos(msg, width).__int__()):
+            _spacer = _spacer + " "
+        return f"{_spacer}{msg}"
+
+    def render(self, article = 0):
+        if self.geometry.total_height >= 40:
+            remaining_rows = self.draw_top_bar()
+            self.article_count = remaining_rows - 10
+            self.task_start_row = (self.geometry.total_height - remaining_rows) + self.article_count
+            self.dash.articles(self.article_count)
+            self.draw_task_list()
+            self.draw_article_list(0)
+            self.read_article(article)
+
+    def draw_top_bar(self) -> int:
         """Draws Main Menu Bar aka top_bar
             :param: items [wx, updates, news_headline]
         """
-        wx, updates, sysinfo = items[0], items[1], items[2]
+        # wx, updates, sysinfo = items[0], f"Updates: {items[1]}", items[2]
+        wx, updates, sysinfo = self.dash.weather(), f"Updates: {self.dash.updates()}", SystemInfo()
         cpu_modelname = sysinfo.cpu['modelname']
         cpu_cores = sysinfo.cpu['cpucores']
         cpu_MHz = int(float(sysinfo.cpu["cpuMHz"]))
         cpu_str = f"{cpu_cores} Core {cpu_modelname} @ {cpu_MHz} MHz"
+        menu_btn_str = f"[F1] Menu"
+        self.stdscr.addstr(0, 0, menu_btn_str, curses.color_pair(3))
         self.stdscr.addstr(0, (self.geometry.total_width - len(wx) + 1 - len(updates) - len(cpu_str) - 10), cpu_str, curses.color_pair(1))
         self.stdscr.addstr(0, (self.geometry.total_width - len(wx) + 1 - len(updates) - 5), updates)
         self.stdscr.addstr(0, (self.geometry.total_width - len(wx)), wx)
         # Print Separator
-        self.stdscr.hline(self.geometry.top_row_height, 0, "-", self.geometry.total_width, curses.A_BOLD)
+        self.stdscr.hline(self.geometry.top_row_height, 0, self.hline, self.geometry.total_width, curses.A_BOLD)
         # Determine how many rows are left in the current terminal
         remaining_rows = (self.geometry.total_height - (self.geometry.top_row_height + self.geometry.spacer_height)) 
         return remaining_rows
 
-    def draw_article_list(self, articles: List, active: int = 0):
+    def draw_task_list(self):
+        task = Task()
+        if task.installed:
+            self.stdscr.hline(self.task_start_row, 0, self.hline, self.geometry.two_pane_width)
+            self.stdscr.addstr(self.task_start_row + 1, 0, self.print_section_header("Active Tasks", self.geometry.two_pane_width), curses.A_BOLD)
+            pendingtasks = task.pending_tasks_list()
+            for i, taskitem in enumerate(pendingtasks, start=2):
+                self.stdscr.addstr(self.task_start_row + i, 0, taskitem, curses.A_BOLD)
+
+    def draw_article_list(self, active: int = 0):
+        articles = self.dash.articles()
         for i in range((self.geometry.top_row_height + self.geometry.spacer_height), self.geometry.total_height):
             self.stdscr.move(i, self.geometry.two_pane_width)
             self.stdscr.clrtoeol()
-
         for i, article in enumerate(articles, start=0):
             article_snippet = article[:self.geometry.two_pane_width-5]
             if ((i + self.geometry.top_row_height + self.geometry.spacer_height) < self.geometry.total_height):
@@ -269,124 +285,84 @@ class UserInterface:
                 else:
                     self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, 0, article_snippet, curses.color_pair(1))
 
-def enable_task_integration():
-    """Check first if task is installed"""
-def draw_ui(stdscr, **kwargs):
-    dash = kwargs["dash"]
-    config = kwargs["config"]
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    geometry = Geometry(stdscr)
-    UI = UserInterface(stdscr)
-    stdscr.clear()
-
-    menu_btn_str = f"[F1] Menu"
-    stdscr.addstr(0, 0, menu_btn_str, curses.color_pair(3))
-    # news_headline = dash.print_news(1).split("> ")[1]
-    sysinfo = SystemInfo()
-    wx = dash.print_weather()
-    updates = dash.print_updates()
-    # # Print Title Bar
-    remaining_rows = UI.draw_top_bar([wx, updates, sysinfo])
-    # Fetch that many news items
-    # news_articles = dash.get_news(remaining_rows)
-    news_articles = dash.articles
-    UI.draw_article_list(news_articles)
-    # Begin pane 2 
-    read_article(stdscr, geometry, UI, dash, 0,)
-
-def read_article(stdscr, geometry, UI, dash, number = 0):
-    depth_counter = 0
-    scroll_offset = 0
-    article = dash.article_reader(number)
-    while True:
-        for i in range((geometry.top_row_height), geometry.total_height):
-            stdscr.move(i, geometry.two_pane_width)
-            stdscr.clrtoeol()
-
-        for i, line in enumerate(article[scroll_offset:]):
-            if i + geometry.top_row_height +geometry.spacer_height >= geometry.bottom_row_height():
+    def handle_menu(self):
+        self.stdscr.clear()
+        self.stdscr.addstr(1, 1, "Menu Opened! Press 'q' to exit this menu.", curses.A_BOLD)
+        self.stdscr.refresh()
+        while True:
+            key = self.stdscr.getch()
+            if key == ord('q'):
                 break
-            stdscr.addstr(geometry.top_row_height + geometry.spacer_height + i, geometry.two_pane_width, line)
-        # print Separator
-        stdscr.hline(geometry.top_row_height, 0, "-", geometry.total_width)
-        # print V Separaror
-        stdscr.vline(geometry.top_row_height + geometry.spacer_height, geometry.two_pane_width -1, "|", geometry.bottom_row_height() - geometry.spacer_height)
-        # Draw the screen
-        stdscr.refresh()
-        # Get input
-        key = stdscr.getch()
-        if key == curses.KEY_UP and scroll_offset > 0:
-            scroll_offset -= 1
-        elif key == curses.KEY_DOWN and scroll_offset < len(article) - geometry.bottom_row_height() + geometry.spacer_height:
-            scroll_offset += 1  # Scroll down
+        self.stdscr.clear()
+        draw_ui(self.stdscr)
+
+    def read_article(self, number = 0):
+        self.depth_counter = 0
+        self.scroll_offset = 0
+        self.article = self.dash.article_reader(number)
+        while True:
+            for i in range((self.geometry.top_row_height), self.geometry.total_height):
+                self.stdscr.move(i, self.geometry.two_pane_width)
+                self.stdscr.clrtoeol()
+
+            for i, line in enumerate(self.article[self.scroll_offset:]):
+                if i + self.geometry.top_row_height + self.geometry.spacer_height >= self.geometry.bottom_row_height():
+                    break
+                self.stdscr.addstr(self.geometry.top_row_height + self.geometry.spacer_height + i, self.geometry.two_pane_width, line)
+
+            self.stdscr.hline(self.geometry.top_row_height, 0, self.hline, self.geometry.total_width)
+            self.stdscr.vline(self.geometry.top_row_height + self.geometry.spacer_height, self.geometry.two_pane_width -1, self.vline, self.geometry.bottom_row_height() - self.geometry.spacer_height)
+            self.stdscr.refresh()
+            self.keybinds(number)
+
+    def keybinds(self, number = 0):
+        key = self.stdscr.getch()
+        if key == curses.KEY_UP or key == ord('k') and self.scroll_offset > 0:
+            self.scroll_offset -= 1
+        elif key == curses.KEY_DOWN or key == ord('j') and self.scroll_offset < len(self.article) - self.geometry.bottom_row_height() + self.geometry.spacer_height:
+            self.scroll_offset += 1  # Scroll down
         elif key == curses.KEY_F1:
-            handle_menu(stdscr)
+            self.handle_menu()
         elif key == 14:
             number = number + 1
-            depth_counter += 1
-            UI.draw_article_list(dash.articles, number)
-            read_article(stdscr, geometry, UI, dash, number)
+            self.depth_counter += 1
+            self.draw_article_list(number)
+            self.read_article(number)
         elif key == 16:
-            depth_counter -= 1
+            self.depth_counter -= 1
             number = number - 1
-            UI.draw_article_list(dash.articles, number)
-            read_article(stdscr, geometry, UI, dash, number)
+            self.draw_article_list(number)
+            self.read_article(number)
         elif key == ord('q'):
             sys.exit()
 
-def handle_menu(stdscr):
-    stdscr.clear()
-    stdscr.addstr(1, 1, "Menu Opened! Press 'q' to exit this menu.", curses.A_BOLD)
-    stdscr.refresh()
-    while True:
-        key = stdscr.getch()
-        if key == ord('q'):
-            break
-    stdscr.clear()
-    draw_ui(stdscr)
-
-def main():
-    parser = argparse.ArgumentParser(description="Dashboard Interface")
-    parser.add_argument('--weather', '-w', action='store_true', help="Display weather.")
-    parser.add_argument('--updates', '-u', action='store_true', help="Display updates.")
-    parser.add_argument('--spacer', '-s', action='store_true', help="Display spacer.")
-    parser.add_argument('--news', '-n', type=int, help="Number of articles to fetch.")
-    parser.add_argument('--article', '-a', action='store_true', help="Article reader")
-    args = parser.parse_args()
-    config = Config()
-    dash = Dashboard(config)
-    if args.weather:
-        dash.do_print_weather()
-    elif args.updates:
-        dash.do_print_update_count()
-    elif args.spacer:
-        dash.print_spacer()
-    elif args.news:
-        dash.print_news(args.news)
-    elif args.article:
-        dash.article_reader()
-    else:
-        # print("Please specify an option. Use --help for more details.")
-        kw = {"dash": dash, "config": config}
-        # curses.wrapper(draw_ui)
-        curses.wrapper(lambda stdscr: draw_ui(stdscr, **kw))
-    # UI = UI()
-    # curses.wrapper(draw_ui)
-
 class Task:
-    def __init__(self):
-        self.command = 'task' if subprocess.run(['task'], stdout=subprocess.PIPE, text=True) else 'CNF'
-        self.active_tasks = self.load_tasks('active')
-        self.completed_tasks = self.load_tasks('done')
+    """
+    Main Task Interface
 
-    def load_tasks(self, filter: str = "") -> Any:
+    Attributes:
+        installed (bool): is task installed?
+        command (str): command to be run on the host
+        tasks (list): all available task objects unfiltered
+        active_tasks (list): all active tasks?
+    """
+    def __init__(self):
+        """
+        """
+        self.installed: bool = True if subprocess.run(['task'], stdout=subprocess.PIPE, text=True) else False
+        self.command = "task"
+        self.pending_tasks = self.load_tasks('pending') if self.installed else False
+        self.active_tasks = self.load_tasks('active') if self.installed else False
+
+    def load_tasks(self, filter = None) -> Any:
         """:return: Json"""
+        if filter is None:
+            result = subprocess.run([self.command, 'export'], stdout=subprocess.PIPE, text=True)
+        else:
+            result = subprocess.run([self.command, f"status:{filter}", 'export'], stdout=subprocess.PIPE, text=True)
         try:
-            result = subprocess.run([self.command, 'export', filter], stdout=subprocess.PIPE, text=True)
             tasks = json.loads(result.stdout)
+            filter = None
             return tasks
         except Exception:
             return {}
@@ -396,7 +372,25 @@ class Task:
         for task in self.active_tasks:
             _active_tasks.append(f"{task["id"]} {task["description"]}")
         return _active_tasks
+    
+    def pending_tasks_list(self):
+        pending_tasks = []
+        for task in self.pending_tasks:
+            pending_tasks.append(f"{task["id"]} {task["description"]}")
+        return pending_tasks
+
+""" Begin Main Program Flow
+"""
+def draw_ui(stdscr):
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)
+    stdscr.clear()
+    UI = UserInterface(stdscr)
+    UI.render()
 
 if __name__ == '__main__':
-    # asyncio.run(main())
-    main()
+    parser = argparse.ArgumentParser(description="Dashboard Interface")
+    args = parser.parse_args()
+    curses.wrapper(lambda stdscr: draw_ui(stdscr))
