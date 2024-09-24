@@ -1,4 +1,6 @@
-![alt text](https://github.com/th3r00t/dashboard/blob/master/intro.png?raw=true)
+#+CAPTION: Preview
+#+NAME: preview
+[[https://github.com/th3r00t/dashboard/blob/master/intro.png?raw=true]]
 * dashboard
 
 ** A single file, minimal dependency terminal dashboard
