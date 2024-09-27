@@ -8,7 +8,6 @@ class TestTaskWarrior(unittest.TestCase):
 
     def test_get_all_tasks(self):
         self.task.load_tasks()
-        breakpoint()
 
     def test_get_pending_tasks(self):
         tasks = self.task.pending_tasks_list()
